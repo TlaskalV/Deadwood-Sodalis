@@ -1,0 +1,89 @@
+###
+### Nanopore sequencing
+###
+
+# fast5 to fastq called using Albacore v2.1.7, min quality 7
+
+# porechop v0.2.3 
+./Porechop/porechop-runner.py --input all_passed_merged.fastq --output all_passed_merged_trimmed.fastq --threads 50 --verbosity 1 --end_threshold 75 --min_split_read_size 300
+
+# all_passed_merged_trimmed.fastq available at Figshare (10.6084/m9.figshare.13221092)
+
+###
+### Genome assembly
+###
+
+# Sodalis ligni
+./bin/unicycler --short1 forward_R1_001.fastq --short2 reverse_R2_001.fastq --long all_passed_merged_trimmed.fastq --out ./unic_normal/ --threads 40 --verbosity 2 --keep 2 --mode normal
+
+# Sodalis dw96
+./bin/unicycler --short1 forward_R1_001.fastq.gz --short2 reverse_R2_001.fastq.gz --out ./unicyc_normal/ --threads 40 --verbosity 2 --keep 1 --mode normal --min_polish_size 1000
+
+# Sodalis genomes download
+
+./ncbi-genome-download --genera Sodalis bacteria
+
+###
+### CAZyme annotation
+###
+
+# linearize genomes files of genus Sodalis
+for file1 in *.fa; do
+	genome_id=${file1%%.fa}
+	awk '/^>/{print s? s"\n"$0:$0;s="";next}{s=s sprintf("%s",$0)}END{if(s)print s}' ./${file1} > ./${genome_id}_lin.fas
+done
+
+# prokka genecalling
+for file1 in *_lin.fas; do
+	genome_id=${file1%%_lin.fas}
+	out=${file1%%_lin.fas}
+	./prokka/bin/prokka \
+	--kingdom Bacteria \
+	--mincontiglen 10 \
+	--cpus 10 \
+	--force --rnammer \
+	--outdir ./${out}/${genome_id}_prokka \
+	--prefix ${genome_id}_annotation \
+	./$file1
+done 
+
+# copy
+find . -name "*.faa" -type f -exec cp {} ./annotation \;
+find . -name "*.gff" -type f -exec cp {} ./annotation \;
+
+### GFF file handling with BEDOPS, awk, sed, seqkit
+### gff2bed, merge bed columns to get txt, rename faa file with aa of genes to have positions of genes
+for file in *_annotation.gff
+do
+strain_no=${file%%_annotation.gff}
+	echo "---processing genome number ${strain_no}---"
+	./bedops_v2.4.39/bin/gff2bed < ${strain_no}_annotation.gff > ${strain_no}_genome.bed &&
+	awk -v var="genome_$strain_no" ' { print $4 "\t" var "|" "k" $1 "_" $2 "_" $3 "_" $6 } ' ${strain_no}_genome.bed > ${strain_no}_genome_gene_pos.txt &&
+	sed -r 's/\ .+//' ${strain_no}_annotation.faa > ${strain_no}_genome_short.faa &&
+	cat ${strain_no}_genome_short.faa | ./seqkit/seqkit replace --ignore-case --keep-key --line-width 0 --kv-file <(cut -f 1,2 ${strain_no}_genome_gene_pos.txt) --pattern "^(\w+)" --replacement "{kv}" > ${strain_no}_gene_pos.faa &&
+	rm -v ${strain_no}_genome.bed &&
+	rm -v ${strain_no}_genome_short.faa
+done
+###
+
+# merge faa together
+cat *_gene_pos.faa > all_genes_isolates.faa
+
+### Genecalls against dbCAN, version CAZyDB.07312018.fa, HMMER 3.3, run-dbcan==2.0.11 
+./run_dbcan/bin/run_dbcan.py ./all_genes_isolates.faa protein --db_dir ./run_dbcan/db -t hmmer --out_dir ./annotation --hmm_cpu 4
+
+
+###
+### Wood and soil metagenomic samples mapping
+###
+
+# following block iterated over different genomes and different MG samples
+
+bwa-0.7.17 mem -M -t 2 ./genome_assembly.fasta forward_1.fastq | samclip --ref ./genome_assembly.fasta --max 10 | samtools-1.9 sort > ${i}_mapped_1.bam \
+&& samtools-1.9 view -b -F 4 ${i}_mapped_1.bam > ${i}_mapped_only_1.bam \
+&& rm -v ${i}_mapped_1.bam \
+&& bedtools-2.29.2 bamtobed -cigar -i ${i}_mapped_only_1.bam > ${i}_mapped_only.bed \
+&& awk '$5==60' ${i}_mapped_only.bed > ${i}_mapped_only_60.bed
+
+
+

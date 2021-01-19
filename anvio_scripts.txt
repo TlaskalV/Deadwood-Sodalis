@@ -1,0 +1,110 @@
+###
+### anvio-6.2 pangenome
+###
+
+# convert to contig db
+for file in *.fa
+do
+anvi-script-FASTA-to-contigs-db ${file}
+done
+
+
+# run cmd on contig database to annotate genes
+anvi-setup-ncbi-cogs 
+
+for file in *.db
+do
+anvi-run-ncbi-cogs -c ${file} -T 40 --search-with blastp
+done
+
+# add HMM searches
+for file in *.db
+do
+anvi-run-hmms -c ${file} --num-threads 40
+done
+
+# build genomes storage
+anvi-gen-genomes-storage --external-genomes description_file_sodalis_only.txt --output-file Sodalis_only-GENOMES.db
+
+# pangenome analysis Sodalis
+anvi-pan-genome -g Sodalis_only-GENOMES.db \
+   --project-name "Sodalis_Pan" \
+   --output-dir ./2020sodalis_only \
+   --num-threads 20 \
+   --minbit 0.5 \
+   --mcl-inflation 8 \
+   --use-ncbi-blast
+   
+# genomes storage and pangenome database available at Figshare (10.6084/m9.figshare.13221065)
+
+# ANI				
+anvi-compute-genome-similarity --external-genomes description_file_sodalis_only.txt \
+--program pyANI \
+--output-dir ANI_sodalis_only \
+--num-threads 60 \
+--pan-db ./2020sodalis_only/Sodalis_Pan-PAN.db
+
+
+# display
+anvi-display-pan -p ./Sodalis_Pan-PAN.db -g ./Sodalis_only-GENOMES.db
+
+# get enriched functions
+anvi-get-enriched-functions-per-pan-group -p ./2020sodalis_only/Sodalis_Pan-PAN.db \
+-g Sodalis_only-GENOMES.db \
+--category wood-associated \
+--annotation-source COG_FUNCTION \
+-o Sodalis_Pan-enriched-functions-wood-assoc.txt \
+--functional-occurrence-table-output Sodalis_Pan-enriched-frequency-wood-assoc.txt
+
+###
+### anvio-6.2 metagenome mapping
+###
+
+# map MG samples
+for i in metagenome_sample_X* do
+	bwa mem -M -t 4 ./sodalis_ligni_genome.fas ./${i}.1.gz ./${i}.2.gz | ./samtools-1.9/samtools sort -o ${i}_mg_sorted.bam \
+	&& echo "=====mapping finished======"
+done
+
+# create contig database
+anvi-gen-contigs-database -f sodalis_ligni_genome.fas -o sodalis_23.db -n 'Sodalis 23 contig db'
+
+# annotation
+anvi-run-hmms -c sodalis_23.db --num-threads 40
+
+anvi-run-ncbi-cogs -c sodalis_23.db --num-threads 40 --search-with blastp
+
+# index
+for i in *_mg_sorted.bam
+do
+anvi-init-bam -o ${i}_sorted_indexed.bam --num-threads 20 ${i}_mg_sorted.bam
+done
+
+# profiling
+for i in *_sorted_indexed.bam
+do
+anvi-profile -i ${i}_sorted_indexed.bam -c sodalis_23.db --min-coverage-for-variability 10 --output-dir ./${i}_bam_profile --num-threads 60 --sample-name sample_${i}
+done
+
+# add collection
+anvi-script-add-default-collection -p mg_samples/PROFILE.db -c sodalis_23.db  -b everything -C default
+
+# metagenome mapping database available at Figshare (10.6084/m9.figshare.13221074)
+
+# SNVs computing
+anvi-gen-variability-profile --engine NT \
+--include-contig-names \
+-p mg_samples/PROFILE.db \
+-c sodalis_23.db \
+-o variability.txt \
+--compute-gene-coverage-stats \
+-C default \
+-b everything
+
+# for interactive
+anvi-merge ./*_bam_profile/PROFILE.db -o mg_samples -c sodalis_23.db
+anvi-interactive -p mg_samples/PROFILE.db -c sodalis_23.db
+
+
+
+
