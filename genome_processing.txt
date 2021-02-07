@@ -86,4 +86,28 @@ bwa-0.7.17 mem -M -t 2 ./genome_assembly.fasta forward_1.fastq | samclip --ref .
 && awk '$5==60' ${i}_mapped_only.bed > ${i}_mapped_only_60.bed
 
 
+###
+### nifH phylogeny of Proteobacteria
+###
+
+# nifH database downloaded from GitHub repo
+# https://github.com/moyn413/nifHdada2
+# git version 76eab8fd27a85f752cb1b5faeb95bab59144a230
+
+# titles of sequences exported to text file and used in R script to randomly select representative sequence per taxon (set.seed for reproducibility of the selection)
+# R script is as follows
+
+library(tidyverse)
+library(readr)
+set.seed(24)
+titles_subsampled <- read_delim("all_titles.txt", "|", escape_double = FALSE, 
+                     col_names = FALSE, trim_ws = TRUE) %>% 
+  group_by(X2) %>% 
+  slice_sample(n = 1) %>% 
+  ungroup() %>% 
+  mutate(export = paste(X1, X2, sep = "|")) %>% 
+  select(export)
+
+# all Proteobacteria selected from subsampled titles and their titles used to filter original nifH database
+# merged with nifH of isolates and proceeded to phylogenetic tree construction
 
